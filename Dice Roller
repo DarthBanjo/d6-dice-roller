@@ -1,0 +1,370 @@
+// Key for localStorage to store last 3 formulas
+const STORAGE_KEY = `foundry-dice-recent-formulas-${game.userId}`;
+
+// Initialize the custom formula to be empty
+let customFormula = '';
+let diceCounts = { d4: 0, d6: 0, d8: 0, d10: 0, d12: 0, d20: 0, d100: 0 };
+let modifiers = 0;
+
+// Function to update the custom roll formula display
+function updateFormulaDisplay(html) {
+  customFormula = '';
+  for (let die in diceCounts) {
+    if (diceCounts[die] > 0) {
+      customFormula += (customFormula.length > 0 ? ' + ' : '') + `${diceCounts[die]}${die}`;
+    }
+  }
+  if (modifiers !== 0) {
+    customFormula += (customFormula.length > 0 ? ' + ' : '') + `${modifiers}`;
+  }
+
+  const formulaField = html.find('#custom-formula');
+  formulaField.val(customFormula);
+  formulaField.focus();
+  formulaField[0].setSelectionRange(customFormula.length, customFormula.length);
+
+  toggleRollButton(html);
+}
+
+// Function to enable or disable the Roll button
+function toggleRollButton(html) {
+  const formulaField = html.find('#custom-formula');
+  const rollButton = html.find('#roll-formula');
+  const rollTwiceButton = html.find('#roll-twice');
+  if (formulaField.val().trim() === '') {
+    rollButton.prop('disabled', true);
+    rollTwiceButton.prop('disabled', true);
+  } else {
+    rollButton.prop('disabled', false);
+    rollTwiceButton.prop('disabled', false);
+  }
+}
+
+// Function to play the sound for advantage rolls only
+function playAdvantageSound() {
+  AudioHelper.play({
+    src: "Sounds/Interface/Advantage%20Roll.wav", // Replace with actual path
+    volume: 0.8,
+    loop: false
+  }, true);
+}
+
+// Function to send both rolls in a single chat message, highlighting the higher and lower rolls
+async function sendRollsToChat(formula) {
+  if (!formula) return;
+
+  try {
+    // Evaluate the first roll
+    let firstRoll = new Roll(formula);
+    await firstRoll.evaluate({ async: true });
+
+    // Evaluate the second roll
+    let secondRoll = new Roll(formula);
+    await secondRoll.evaluate({ async: true });
+
+    // Compare the two rolls and apply colors accordingly
+    let higherResult, lowerResult;
+    if (firstRoll.total >= secondRoll.total) {
+      higherResult = `<span style="color: green;"><strong>${firstRoll.total}</strong></span>`;
+      lowerResult = `<span style="color: red;"><strong>${secondRoll.total}</strong></span>`;
+    } else {
+      higherResult = `<span style="color: green;"><strong>${secondRoll.total}</strong></span>`;
+      lowerResult = `<span style="color: red;"><strong>${firstRoll.total}</strong></span>`;
+    }
+
+    // Play sound for advantage/disadvantage roll
+    playAdvantageSound();
+
+    // Send both rolls in one message with highlighted results
+    ChatMessage.create({
+      speaker: ChatMessage.getSpeaker(),
+      flavor: `Rolling ${formula} twice for advantage/disadvantage:`,
+      content: `
+        <p style="font-size: 2em;"><strong>High: ${higherResult} Low: ${lowerResult}</strong></p>
+      `,
+      rollMode: game.settings.get("core", "rollMode")
+    });
+
+    ui.sidebar.activateTab("chat");
+  } catch (error) {
+    console.error("Error with formula: ", formula, error);
+    ui.notifications.error("Invalid roll formula. Please check the syntax.");
+  }
+}
+
+// Function to send a single roll to chat
+async function sendRollToChat(formula) {
+  if (!formula) return;
+
+  try {
+    let roll = new Roll(formula);
+    await roll.evaluate({ async: true });
+
+    roll.toMessage({
+      speaker: ChatMessage.getSpeaker(),
+      flavor: `Rolling ${formula}`,
+      rollMode: game.settings.get("core", "rollMode")
+    });
+
+    ui.sidebar.activateTab("chat");
+  } catch (error) {
+    console.error("Error with formula: ", formula, error);
+    ui.notifications.error("Invalid roll formula. Please check the syntax.");
+  }
+}
+
+// Function to send a luck roll (50/50 chance: heads or tails)
+async function sendLuckRollToChat() {
+  let luckRoll = new Roll("1d2");
+  await luckRoll.evaluate({ async: true });
+
+  const resultText = luckRoll.total === 1 ? "Heads" : "Tails";
+
+  ChatMessage.create({
+    speaker: ChatMessage.getSpeaker(),
+    flavor: "Luck Roll (50/50):",
+    content: `<p style="font-size: 2em;"><strong>${resultText}</strong></p>`,
+    rollMode: game.settings.get("core", "rollMode")
+  });
+
+  ui.sidebar.activateTab("chat");
+}
+
+// Function to get the last 3 used formulas from local storage
+function getRecentFormulas() {
+  const stored = localStorage.getItem(STORAGE_KEY);
+  return stored ? JSON.parse(stored) : [];
+}
+
+// Function to save the current formula to local storage
+function saveRecentFormula(formula) {
+  let formulas = getRecentFormulas();
+  formulas = formulas.filter(f => f !== formula);
+  formulas.unshift(formula);
+  formulas = formulas.slice(0, 4);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(formulas));
+}
+
+// Function to update the recent formulas section and bind click events to roll
+function updateRecentFormulas(html) {
+  const recentFormulas = getRecentFormulas();
+  const recentButtons = ['#recent-01', '#recent-02', '#recent-03', '#recent-04'];
+
+  recentButtons.forEach((selector, index) => {
+    const button = html.find(selector);
+    const formula = recentFormulas[index];
+
+    if (formula) {
+      button.text(formula);
+      button.prop('disabled', false);
+      button.off('click').on('click', () => {
+        sendRollToChat(formula);
+      });
+    } else {
+      button.text(`Recent 0${index + 1}`);
+      button.prop('disabled', true);
+    }
+  });
+}
+
+// Dialog content for dice and modifier buttons, now including d100 and Luck button
+let dialogContent = `
+  <style>
+    /* Hover styling for Roll! and Clear buttons */
+    #roll-formula:hover {
+      background-color: #248a19;
+    }
+    #roll-twice:hover {
+      background-color: #248a19;
+    }
+    #clear-formula:hover svg {
+      fill: black;
+    }
+    #clear-formula {
+      background: none;
+      border: none;
+      cursor: pointer;
+      width: 45px;
+      height: 45px;
+      padding: 0;
+    }
+    #clear-formula svg {
+      width: 100%;
+      height: 100%;
+    }
+    .formula-container {
+      display: flex;
+      align-items: center;
+    }
+    .formula-container input {
+      flex: 1;
+      height: 45px;
+      font-size: 150%;
+      border: 2px solid black;
+    }
+    .formula-container button {
+      margin-left: 10px;
+    }
+    .button-container {
+      margin-top: 15px;
+      display: flex;
+      justify-content: space-between;
+    }
+    /* Style for Recent Formula buttons */
+    .recent-rolls-section {
+      background-color: #999791;
+      padding: 10px;
+      border-radius: 5px;
+      margin-top: 10px;
+    }
+    .recent-formula {
+      width: 48%;
+      text-align: center;
+      margin: 5px 0;
+      background-color: #7797a5;
+      color: white;
+      border: 1px solid #5a6e79;
+      border-radius: 4px;
+    }
+    .recent-formula:disabled {
+      opacity: 0.5;
+    }
+  </style>
+
+  <p><strong>Select Dice to Add:</strong></p>
+  <div style="display: grid; grid-template-columns: repeat(5, 1fr); grid-gap: 5px;">
+      <button type="button" class="dice-button" data-die="d4" title="Add 1d4">d4</button>
+      <button type="button" class="dice-button" data-die="d6" title="Add 1d6">d6</button>
+      <button type="button" class="dice-button" data-die="d8" title="Add 1d8">d8</button>
+      <button type="button" class="dice-button" data-die="d10" title="Add 1d10">d10</button>
+      <button type="button" class="dice-button" data-die="d12" title="Add 1d12">d12</button>
+      <button type="button" class="dice-button" data-die="d20" title="Add 1d20">d20</button>
+      <button type="button" class="dice-button" data-die="d100" title="Add 1d100">d100</button>
+      <button type="button" class="dice-button" id="luck-roll" title="50/50">Luck</button>
+  </div>
+
+  <p><strong>Select Modifiers to Add:</strong></p>
+  <div style="display: grid; grid-template-columns: repeat(5, 1fr); grid-gap: 5px;">
+      <button type="button" class="mod-button" data-mod="+1" title="Add 1">+1</button>
+      <button type="button" class="mod-button" data-mod="+2" title="Add 2">+2</button>
+      <button type="button" class="mod-button" data-mod="+3" title="Add 3">+3</button>
+      <button type="button" class="mod-button" data-mod="+4" title="Add 4">+4</button>
+      <button type="button" class="mod-button" data-mod="+5" title="Add 5">+5</button>
+      <button type="button" class="mod-button" data-mod="+6" title="Add 6">+6</button>
+      <button type="button" class="mod-button" data-mod="+7" title="Add 7">+7</button>
+      <button type="button" class="mod-button" data-mod="+8" title="Add 8">+8</button>
+      <button type="button" class="mod-button" data-mod="+9" title="Add 9">+9</button>
+      <button type="button" class="mod-button" data-mod="+10" title="Add 10">+10</button>
+  </div>
+
+  <p><strong>Roll Formula:</strong></p>
+  <div class="formula-container">
+    <input type="text" id="custom-formula" style="width: 100%;" value="${customFormula}" />
+    <button type="button" id="clear-formula">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 260"><path d="m156.6 130 80.74-80.74c7.35-7.35 7.35-19.25 0-26.6s-19.25-7.35-26.6 0l-80.74 80.74-80.74-80.74c-7.35-7.35-19.25-7.35-26.6 0s-7.35 19.25 0 26.6l80.74 80.74-80.74 80.74c-7.35 7.35-7.35 19.25 0 26.6 3.67 3.67 8.49 5.51 13.3 5.51s9.63-1.84 13.3-5.51l80.74-80.74 80.74 80.74c3.67 3.67 8.49 5.51 13.3 5.51s9.63-1.84 13.3-5.51c7.35-7.35 7.35-19.25 0-26.6z" fill="#a81111"/></svg>
+    </button>
+  </div>
+  <div class="button-container">
+    <button type="button" id="roll-formula" title="Roll 'em!" disabled>Roll!</button>
+    <button type="button" id="roll-twice" title="Advantage/Disadvantage" disabled>Roll Twice!</button>
+  </div>
+  
+  <div class="recent-rolls-section">
+    <div style="display: flex; justify-content: space-between;">
+      <button type="button" class="recent-formula" id="recent-01" title="Recent 01" disabled>Recent 01</button>
+      <button type="button" class="recent-formula" id="recent-02" title="Recent 02" disabled>Recent 02</button>
+    </div>
+    <div style="display: flex; justify-content: space-between;">
+      <button type="button" class="recent-formula" id="recent-03" title="Recent 03" disabled>Recent 03</button>
+      <button type="button" class="recent-formula" id="recent-04" title="Recent 04" disabled>Recent 04</button>
+    </div>
+  </div>
+`;
+
+// Create the dialog
+new Dialog({
+  title: "Dice Roller",
+  content: dialogContent,
+  buttons: {},
+  render: (html) => {
+    // Handle adding dice to the custom formula
+    html.find('.dice-button').click(ev => {
+      let die = ev.currentTarget.dataset.die;
+      diceCounts[die] += 1;
+      updateFormulaDisplay(html);
+    });
+
+    // Handle Luck button
+    html.find('#luck-roll').click(() => {
+      sendLuckRollToChat();
+    });
+
+    // Handle adding modifiers to the custom formula
+    html.find('.mod-button').click(ev => {
+      let mod = parseInt(ev.currentTarget.dataset.mod);
+      modifiers += mod;
+      updateFormulaDisplay(html);
+    });
+
+    // Function to execute a single roll
+    const executeRoll = () => {
+      let formula = html.find('#custom-formula').val();
+      if (!formula || formula.trim() === "") {
+        return;
+      }
+      sendRollToChat(formula);
+      saveRecentFormula(formula);
+      updateRecentFormulas(html);
+      html.closest(".dialog").find("button.close").click();
+    };
+
+    // Function to execute two rolls (for advantage/disadvantage)
+    const executeRollTwice = () => {
+      let formula = html.find('#custom-formula').val();
+      if (!formula || formula.trim() === "") {
+        return;
+      }
+      sendRollsToChat(formula);
+      saveRecentFormula(formula);
+      updateRecentFormulas(html);
+      html.closest(".dialog").find("button.close").click();
+    };
+
+    // Trigger roll on clicking the "Roll!" button
+    html.find('#roll-formula').click(() => {
+      executeRoll();
+    });
+
+    // Trigger roll twice on clicking the "Roll Twice!" button
+    html.find('#roll-twice').click(() => {
+      executeRollTwice();
+    });
+
+    // Allow direct typing into the formula input field and toggle Roll buttons
+    html.find('#custom-formula').on('input', ev => {
+      customFormula = ev.currentTarget.value;
+      toggleRollButton(html);
+    });
+
+    // Capture the Enter key only when the text field is active
+    html.find('#custom-formula').keydown(ev => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        executeRoll();
+      }
+    });
+
+    // Handle clearing the custom formula
+    html.find('#clear-formula').click(() => {
+      diceCounts = { d4: 0, d6: 0, d8: 0, d10: 0, d12: 0, d20: 0, d100: 0 };
+      modifiers = 0;
+      customFormula = '';
+      updateFormulaDisplay(html);
+    });
+
+    // Display recent formulas
+    updateRecentFormulas(html);
+  },
+  close: () => {}
+}).render(true);
