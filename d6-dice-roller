@@ -30,23 +30,14 @@ function updateFormulaDisplay(html) {
 function toggleRollButton(html) {
   const formulaField = html.find('#custom-formula');
   const rollButton = html.find('#roll-formula');
-  const rollTwiceButton = html.find('#roll-twice');
+  const rollWildButton = html.find('#roll-wild');
   if (formulaField.val().trim() === '') {
     rollButton.prop('disabled', true);
-    rollTwiceButton.prop('disabled', true);
+    rollWildButton.prop('disabled', true);
   } else {
     rollButton.prop('disabled', false);
-    rollTwiceButton.prop('disabled', false);
+    rollWildButton.prop('disabled', false);
   }
-}
-
-// Function to play the sound for advantage rolls only
-function playAdvantageSound() {
-  AudioHelper.play({
-    src: "Sounds/Interface/Advantage%20Roll.wav", // Replace with actual path
-    volume: 0.8,
-    loop: false
-  }, true);
 }
 
 // Function to send both rolls in a single chat message, highlighting the higher and lower rolls
@@ -72,8 +63,6 @@ async function sendRollsToChat(formula) {
       lowerResult = `<span style="color: red;"><strong>${firstRoll.total}</strong></span>`;
     }
 
-    // Play sound for advantage/disadvantage roll
-    playAdvantageSound();
 
     // Send both rolls in one message with highlighted results
     ChatMessage.create({
@@ -113,21 +102,29 @@ async function sendRollToChat(formula) {
   }
 }
 
-// Function to send a luck roll (50/50 chance: heads or tails)
-async function sendLuckRollToChat() {
-  let luckRoll = new Roll("1d2");
-  await luckRoll.evaluate({ async: true });
+// --- Add this function ---
+// Parse the formula and convert one die into a Wild Die (1dwx6).
+function convertToWildDie(formula) {
+  // Match dice of form "Xd6" or "d6"
+  const diceRegex = /(\d*)d6/;
+  const match = formula.match(diceRegex);
 
-  const resultText = luckRoll.total === 1 ? "Heads" : "Tails";
+  if (!match) return formula; // no d6 found, just return original
 
-  ChatMessage.create({
-    speaker: ChatMessage.getSpeaker(),
-    flavor: "Luck Roll (50/50):",
-    content: `<p style="font-size: 2em;"><strong>${resultText}</strong></p>`,
-    rollMode: game.settings.get("core", "rollMode")
-  });
+  let count = parseInt(match[1] || "1"); // if "d6", count=1
+  if (count <= 0) return formula;
 
-  ui.sidebar.activateTab("chat");
+  // Reduce normal dice count by 1
+  let newBase = (count - 1 > 0) ? `${count - 1}d6` : "";
+  let remainder = formula.replace(diceRegex, "").trim();
+
+  // Rebuild formula with Wild Die
+  let parts = [];
+  if (newBase) parts.push(newBase);
+  parts.push("1dwx6"); // <-- the Wild Die
+  if (remainder) parts.push(remainder);
+
+  return parts.join(" + ");
 }
 
 // Function to get the last 3 used formulas from local storage
@@ -167,15 +164,15 @@ function updateRecentFormulas(html) {
   });
 }
 
-// Dialog content for dice and modifier buttons, now including d100 and Luck button
+// Dialog content for dice and pip buttons
 let dialogContent = `
   <style>
     /* Hover styling for Roll! and Clear buttons */
     #roll-formula:hover {
-      background-color: #248a19;
+      background-color: #AB8D3F;
     }
     #roll-twice:hover {
-      background-color: #248a19;
+      background-color: #AB8D3F;
     }
     #clear-formula:hover svg {
       fill: black;
@@ -231,30 +228,16 @@ let dialogContent = `
     }
   </style>
 
-  <p><strong>Select Dice to Add:</strong></p>
+  <p><strong>Click Multiple Times to Add Dice:</strong></p>
   <div style="display: grid; grid-template-columns: repeat(5, 1fr); grid-gap: 5px;">
-      <button type="button" class="dice-button" data-die="d4" title="Add 1d4">d4</button>
-      <button type="button" class="dice-button" data-die="d6" title="Add 1d6">d6</button>
-      <button type="button" class="dice-button" data-die="d8" title="Add 1d8">d8</button>
-      <button type="button" class="dice-button" data-die="d10" title="Add 1d10">d10</button>
-      <button type="button" class="dice-button" data-die="d12" title="Add 1d12">d12</button>
-      <button type="button" class="dice-button" data-die="d20" title="Add 1d20">d20</button>
-      <button type="button" class="dice-button" data-die="d100" title="Add 1d100">d100</button>
-      <button type="button" class="dice-button" id="luck-roll" title="50/50">Luck</button>
+      <button type="button" class="dice-button" data-die="d6" title="Add 1d6">D6</button>
   </div>
 
-  <p><strong>Select Modifiers to Add:</strong></p>
+  <p><strong>Select Pips to Add:</strong></p>
   <div style="display: grid; grid-template-columns: repeat(5, 1fr); grid-gap: 5px;">
       <button type="button" class="mod-button" data-mod="+1" title="Add 1">+1</button>
       <button type="button" class="mod-button" data-mod="+2" title="Add 2">+2</button>
       <button type="button" class="mod-button" data-mod="+3" title="Add 3">+3</button>
-      <button type="button" class="mod-button" data-mod="+4" title="Add 4">+4</button>
-      <button type="button" class="mod-button" data-mod="+5" title="Add 5">+5</button>
-      <button type="button" class="mod-button" data-mod="+6" title="Add 6">+6</button>
-      <button type="button" class="mod-button" data-mod="+7" title="Add 7">+7</button>
-      <button type="button" class="mod-button" data-mod="+8" title="Add 8">+8</button>
-      <button type="button" class="mod-button" data-mod="+9" title="Add 9">+9</button>
-      <button type="button" class="mod-button" data-mod="+10" title="Add 10">+10</button>
   </div>
 
   <p><strong>Roll Formula:</strong></p>
@@ -265,8 +248,12 @@ let dialogContent = `
     </button>
   </div>
   <div class="button-container">
-    <button type="button" id="roll-formula" title="Roll 'em!" disabled>Roll!</button>
-    <button type="button" id="roll-twice" title="Advantage/Disadvantage" disabled>Roll Twice!</button>
+    <button type="button" id="roll-wild" title="Roll with Wild Dice" disabled>
+    Roll with Wild Die!
+  </button>
+  <button type="button" id="roll-formula" title="Roll Normal" disabled>
+    Roll!
+  </button>
   </div>
   
   <div class="recent-rolls-section">
@@ -330,15 +317,27 @@ new Dialog({
       html.closest(".dialog").find("button.close").click();
     };
 
-    // Trigger roll on clicking the "Roll!" button
-    html.find('#roll-formula').click(() => {
-      executeRoll();
-    });
+// Normal roll (was Roll Twice)
+  html.find('#roll-formula').click(() => {
+    let formula = html.find('#custom-formula').val();
+    if (!formula || formula.trim() === "") return;
+    sendRollToChat(formula);
+    saveRecentFormula(formula);
+    updateRecentFormulas(html);
+    html.closest(".dialog").find("button.close").click();
+  });
 
-    // Trigger roll twice on clicking the "Roll Twice!" button
-    html.find('#roll-twice').click(() => {
-      executeRollTwice();
-    });
+  // Wild Die roll (was Roll!)
+  html.find('#roll-wild').click(() => {
+    let formula = html.find('#custom-formula').val();
+    if (!formula || formula.trim() === "") return;
+
+    let wildFormula = convertToWildDie(formula);
+    sendRollToChat(wildFormula);
+    saveRecentFormula(wildFormula);
+    updateRecentFormulas(html);
+    html.closest(".dialog").find("button.close").click();
+  });
 
     // Allow direct typing into the formula input field and toggle Roll buttons
     html.find('#custom-formula').on('input', ev => {
