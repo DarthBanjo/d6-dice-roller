@@ -41,19 +41,16 @@ function toggleRollButton(html) {
 }
 
 // Function to send both rolls in a single chat message, highlighting the higher and lower rolls
-async function sendRollsToChat(formula) {
+async function sendRollsToChat(formula, displayFormula = null) {
   if (!formula) return;
 
   try {
-    // Evaluate the first roll
     let firstRoll = new Roll(formula);
     await firstRoll.evaluate({ async: true });
 
-    // Evaluate the second roll
     let secondRoll = new Roll(formula);
     await secondRoll.evaluate({ async: true });
 
-    // Compare the two rolls and apply colors accordingly
     let higherResult, lowerResult;
     if (firstRoll.total >= secondRoll.total) {
       higherResult = `<span style="color: green;"><strong>${firstRoll.total}</strong></span>`;
@@ -63,11 +60,9 @@ async function sendRollsToChat(formula) {
       lowerResult = `<span style="color: red;"><strong>${firstRoll.total}</strong></span>`;
     }
 
-
-    // Send both rolls in one message with highlighted results
     ChatMessage.create({
       speaker: ChatMessage.getSpeaker(),
-      flavor: `Rolling ${formula} twice for advantage/disadvantage:`,
+      flavor: `Rolling ${displayFormula ?? formula} twice for advantage/disadvantage:`,
       content: `
         <p style="font-size: 2em;"><strong>High: ${higherResult} Low: ${lowerResult}</strong></p>
       `,
@@ -81,17 +76,41 @@ async function sendRollsToChat(formula) {
   }
 }
 
-// Function to send a single roll to chat
-async function sendRollToChat(formula) {
+// Function to send a single roll to chat (with Wild Die highlighting)
+async function sendRollToChat(formula, isWild = false, displayFormula = null) {
   if (!formula) return;
 
   try {
     let roll = new Roll(formula);
     await roll.evaluate({ async: true });
 
+    let renderedTerms = roll.dice.map(d => {
+      if (d.faces === 6 && d.options?.wild) {
+        // This is the Wild Die
+        return d.results.map(r => {
+          if (r.result === 6) {
+            return `<span style="color: green; font-weight: bold;">${r.result}! (${game.i18n.localize("OD6S.CONFIG_WILD_DIE_MENU")})</span>`;
+          } else if (r.result === 1) {
+            return `<span style="color: red; font-weight: bold;">${r.result}! (${game.i18n.localize("OD6S.CONFIG_WILD_DIE_MENU")})</span>`;
+          } else {
+            return `${r.result}`;
+          }
+        }).join(", ");
+      } else {
+        // Normal dice
+        return d.results.map(r => r.result).join(", ");
+      }
+    }).join(" | ");
+
+    let content = `
+      <p><strong>Total:</strong> ${roll.total}</p>
+      <p><strong>Dice:</strong> ${renderedTerms}</p>
+    `;
+
     roll.toMessage({
       speaker: ChatMessage.getSpeaker(),
-      flavor: `Rolling ${formula}`,
+      flavor: `Rolling ${displayFormula ?? formula}${isWild ? " (Wild Die)" : ""}`,
+      content,
       rollMode: game.settings.get("core", "rollMode")
     });
 
@@ -102,38 +121,32 @@ async function sendRollToChat(formula) {
   }
 }
 
-// --- Add this function ---
-// Parse the formula and convert one die into a Wild Die (1dwx6).
+// Convert normal formula into a wild die formula
 function convertToWildDie(formula) {
-  // Match dice of form "Xd6" or "d6"
   const diceRegex = /(\d*)d6/;
   const match = formula.match(diceRegex);
 
-  if (!match) return formula; // no d6 found, just return original
+  if (!match) return formula;
 
-  let count = parseInt(match[1] || "1"); // if "d6", count=1
+  let count = parseInt(match[1] || "1");
   if (count <= 0) return formula;
 
-  // Reduce normal dice count by 1
   let newBase = (count - 1 > 0) ? `${count - 1}d6` : "";
   let remainder = formula.replace(diceRegex, "").trim();
 
-  // Rebuild formula with Wild Die
   let parts = [];
   if (newBase) parts.push(newBase);
-  parts.push("1dwx6"); // <-- the Wild Die
+  parts.push("1dwx6");
   if (remainder) parts.push(remainder);
 
   return parts.join(" + ");
 }
 
-// Function to get the last 3 used formulas from local storage
+// Local storage recent formulas
 function getRecentFormulas() {
   const stored = localStorage.getItem(STORAGE_KEY);
   return stored ? JSON.parse(stored) : [];
 }
-
-// Function to save the current formula to local storage
 function saveRecentFormula(formula) {
   let formulas = getRecentFormulas();
   formulas = formulas.filter(f => f !== formula);
@@ -141,8 +154,6 @@ function saveRecentFormula(formula) {
   formulas = formulas.slice(0, 4);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(formulas));
 }
-
-// Function to update the recent formulas section and bind click events to roll
 function updateRecentFormulas(html) {
   const recentFormulas = getRecentFormulas();
   const recentButtons = ['#recent-01', '#recent-02', '#recent-03', '#recent-04'];
@@ -164,106 +175,64 @@ function updateRecentFormulas(html) {
   });
 }
 
-// Dialog content for dice and pip buttons
+// --- Dialog Content ---
 let dialogContent = `
   <style>
-    /* Hover styling for Roll! and Clear buttons */
-    #roll-formula:hover {
-      background-color: #AB8D3F;
-    }
-    #roll-twice:hover {
-      background-color: #AB8D3F;
-    }
-    #clear-formula:hover svg {
-      fill: black;
-    }
+    #roll-formula:hover, #roll-wild:hover { background-color: #AB8D3F; }
+    #clear-formula:hover svg { fill: black; }
     #clear-formula {
-      background: none;
-      border: none;
-      cursor: pointer;
-      width: 45px;
-      height: 45px;
-      padding: 0;
+      background: none; border: none; cursor: pointer; width: 45px; height: 45px; padding: 0;
     }
-    #clear-formula svg {
-      width: 100%;
-      height: 100%;
-    }
-    .formula-container {
-      display: flex;
-      align-items: center;
-    }
+    #clear-formula svg { width: 100%; height: 100%; }
+    .formula-container { display: flex; align-items: center; }
     .formula-container input {
-      flex: 1;
-      height: 45px;
-      font-size: 150%;
-      border: 2px solid black;
+      flex: 1; height: 45px; font-size: 150%; border: 2px solid black;
     }
-    .formula-container button {
-      margin-left: 10px;
-    }
-    .button-container {
-      margin-top: 15px;
-      display: flex;
-      justify-content: space-between;
-    }
-    /* Style for Recent Formula buttons */
+    .button-container { margin-top: 15px; display: flex; justify-content: space-between; }
     .recent-rolls-section {
-      background-color: #999791;
-      padding: 10px;
-      border-radius: 5px;
-      margin-top: 10px;
+      background-color: #999791; padding: 10px; border-radius: 5px; margin-top: 10px;
     }
     .recent-formula {
-      width: 48%;
-      text-align: center;
-      margin: 5px 0;
-      background-color: #7797a5;
-      color: white;
-      border: 1px solid #5a6e79;
-      border-radius: 4px;
+      width: 48%; text-align: center; margin: 5px 0;
+      background-color: #7797a5; color: white; border: 1px solid #5a6e79; border-radius: 4px;
     }
-    .recent-formula:disabled {
-      opacity: 0.5;
-    }
+    .recent-formula:disabled { opacity: 0.5; }
   </style>
 
   <p><strong>Click Multiple Times to Add Dice:</strong></p>
   <div style="display: grid; grid-template-columns: repeat(5, 1fr); grid-gap: 5px;">
-      <button type="button" class="dice-button" data-die="d6" title="Add 1d6">D6</button>
+      <button type="button" class="dice-button" data-die="d6">D6</button>
   </div>
 
   <p><strong>Select Pips to Add:</strong></p>
   <div style="display: grid; grid-template-columns: repeat(5, 1fr); grid-gap: 5px;">
-      <button type="button" class="mod-button" data-mod="+1" title="Add 1">+1</button>
-      <button type="button" class="mod-button" data-mod="+2" title="Add 2">+2</button>
-      <button type="button" class="mod-button" data-mod="+3" title="Add 3">+3</button>
+      <button type="button" class="mod-button" data-mod="+1">+1</button>
+      <button type="button" class="mod-button" data-mod="+2">+2</button>
+      <button type="button" class="mod-button" data-mod="+3">+3</button>
   </div>
 
   <p><strong>Roll Formula:</strong></p>
   <div class="formula-container">
-    <input type="text" id="custom-formula" style="width: 100%;" value="${customFormula}" />
+    <input type="text" id="custom-formula" value="${customFormula}" />
     <button type="button" id="clear-formula">
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 260"><path d="m156.6 130 80.74-80.74c7.35-7.35 7.35-19.25 0-26.6s-19.25-7.35-26.6 0l-80.74 80.74-80.74-80.74c-7.35-7.35-19.25-7.35-26.6 0s-7.35 19.25 0 26.6l80.74 80.74-80.74 80.74c-7.35 7.35-7.35 19.25 0 26.6 3.67 3.67 8.49 5.51 13.3 5.51s9.63-1.84 13.3-5.51l80.74-80.74 80.74 80.74c3.67 3.67 8.49 5.51 13.3 5.51s9.63-1.84 13.3-5.51c7.35-7.35 7.35-19.25 0-26.6z" fill="#a81111"/></svg>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 260">
+        <path d="m156.6 130 80.74-80.74c7.35-7.35 7.35-19.25 0-26.6s-19.25-7.35-26.6 0l-80.74 80.74-80.74-80.74c-7.35-7.35-19.25-7.35-26.6 0s-7.35 19.25 0 26.6l80.74 80.74-80.74 80.74c-7.35 7.35-7.35 19.25 0 26.6 3.67 3.67 8.49 5.51 13.3 5.51s9.63-1.84 13.3-5.51l80.74-80.74 80.74 80.74c3.67 3.67 8.49 5.51 13.3 5.51s9.63-1.84 13.3-5.51c7.35-7.35 7.35-19.25 0-26.6z" fill="#a81111"/>
+      </svg>
     </button>
   </div>
   <div class="button-container">
-    <button type="button" id="roll-wild" title="Roll with Wild Dice" disabled>
-    Roll with Wild Die!
-  </button>
-  <button type="button" id="roll-formula" title="Roll Normal" disabled>
-    Roll!
-  </button>
+    <button type="button" id="roll-wild" disabled>Roll with Wild Die!</button>
+    <button type="button" id="roll-formula" disabled>Roll!</button>
   </div>
   
   <div class="recent-rolls-section">
     <div style="display: flex; justify-content: space-between;">
-      <button type="button" class="recent-formula" id="recent-01" title="Recent 01" disabled>Recent 01</button>
-      <button type="button" class="recent-formula" id="recent-02" title="Recent 02" disabled>Recent 02</button>
+      <button type="button" class="recent-formula" id="recent-01" disabled>Recent 01</button>
+      <button type="button" class="recent-formula" id="recent-02" disabled>Recent 02</button>
     </div>
     <div style="display: flex; justify-content: space-between;">
-      <button type="button" class="recent-formula" id="recent-03" title="Recent 03" disabled>Recent 03</button>
-      <button type="button" class="recent-formula" id="recent-04" title="Recent 04" disabled>Recent 04</button>
+      <button type="button" class="recent-formula" id="recent-03" disabled>Recent 03</button>
+      <button type="button" class="recent-formula" id="recent-04" disabled>Recent 04</button>
     </div>
   </div>
 `;
@@ -274,87 +243,61 @@ new Dialog({
   content: dialogContent,
   buttons: {},
   render: (html) => {
-    // Handle adding dice to the custom formula
+    // Add dice
     html.find('.dice-button').click(ev => {
       let die = ev.currentTarget.dataset.die;
       diceCounts[die] += 1;
       updateFormulaDisplay(html);
     });
 
-    // Handle Luck button
-    html.find('#luck-roll').click(() => {
-      sendLuckRollToChat();
-    });
-
-    // Handle adding modifiers to the custom formula
+    // Add modifiers
     html.find('.mod-button').click(ev => {
       let mod = parseInt(ev.currentTarget.dataset.mod);
       modifiers += mod;
       updateFormulaDisplay(html);
     });
 
-    // Function to execute a single roll
-    const executeRoll = () => {
-      let formula = html.find('#custom-formula').val();
-      if (!formula || formula.trim() === "") {
-        return;
-      }
-      sendRollToChat(formula);
-      saveRecentFormula(formula);
+    // Roll normal
+    html.find('#roll-formula').click(() => {
+      let displayFormula = html.find('#custom-formula').val();
+      if (!displayFormula || displayFormula.trim() === "") return;
+      sendRollToChat(displayFormula, false, displayFormula);
+      saveRecentFormula(displayFormula);
       updateRecentFormulas(html);
       html.closest(".dialog").find("button.close").click();
-    };
+    });
 
-    // Function to execute two rolls (for advantage/disadvantage)
-    const executeRollTwice = () => {
-      let formula = html.find('#custom-formula').val();
-      if (!formula || formula.trim() === "") {
-        return;
-      }
-      sendRollsToChat(formula);
-      saveRecentFormula(formula);
+    // Roll wild
+    html.find('#roll-wild').click(() => {
+      let displayFormula = html.find('#custom-formula').val();
+      if (!displayFormula || displayFormula.trim() === "") return;
+      let rollFormula = convertToWildDie(displayFormula);
+      sendRollToChat(rollFormula, true, displayFormula);
+      saveRecentFormula(displayFormula);
       updateRecentFormulas(html);
       html.closest(".dialog").find("button.close").click();
-    };
+    });
 
-// Normal roll (was Roll Twice)
-  html.find('#roll-formula').click(() => {
-    let formula = html.find('#custom-formula').val();
-    if (!formula || formula.trim() === "") return;
-    sendRollToChat(formula);
-    saveRecentFormula(formula);
-    updateRecentFormulas(html);
-    html.closest(".dialog").find("button.close").click();
-  });
-
-  // Wild Die roll (was Roll!)
-  html.find('#roll-wild').click(() => {
-    let formula = html.find('#custom-formula').val();
-    if (!formula || formula.trim() === "") return;
-
-    let wildFormula = convertToWildDie(formula);
-    sendRollToChat(wildFormula);
-    saveRecentFormula(wildFormula);
-    updateRecentFormulas(html);
-    html.closest(".dialog").find("button.close").click();
-  });
-
-    // Allow direct typing into the formula input field and toggle Roll buttons
+    // Handle typing
     html.find('#custom-formula').on('input', ev => {
       customFormula = ev.currentTarget.value;
       toggleRollButton(html);
     });
 
-    // Capture the Enter key only when the text field is active
+    // Enter to roll
     html.find('#custom-formula').keydown(ev => {
       if (ev.key === "Enter") {
         ev.preventDefault();
         ev.stopPropagation();
-        executeRoll();
+        let displayFormula = html.find('#custom-formula').val();
+        sendRollToChat(displayFormula, false, displayFormula);
+        saveRecentFormula(displayFormula);
+        updateRecentFormulas(html);
+        html.closest(".dialog").find("button.close").click();
       }
     });
 
-    // Handle clearing the custom formula
+    // Clear
     html.find('#clear-formula').click(() => {
       diceCounts = { d4: 0, d6: 0, d8: 0, d10: 0, d12: 0, d20: 0, d100: 0 };
       modifiers = 0;
@@ -362,7 +305,6 @@ new Dialog({
       updateFormulaDisplay(html);
     });
 
-    // Display recent formulas
     updateRecentFormulas(html);
   },
   close: () => {}
