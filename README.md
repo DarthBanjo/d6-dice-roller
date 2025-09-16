@@ -1,5 +1,5 @@
 # D6-dice-roller Macro
-For FoundryVTT. Easily roll dice with a wild die, keep a history of dice rolled. Copy the contents of the D6-dice-roller text file to a Foundry Script-based Macro.
+For FoundryVTT. Easily roll dice with a wild die, keep a history of dice rolled. Copy the contents of the [d6-dice-roller text file](./d6-dice-roller) to a Foundry Script-based Macro.
 
 
 <img width="350px" src="./d6_dice_roller_1.jpg" /> <img width="350px" src="./d6_dice_roller_2.jpg" />
