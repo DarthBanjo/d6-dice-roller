@@ -196,7 +196,7 @@ let dialogContent = `
 
 // --- Dialog Creation ---
 new Dialog({
-  title: "Dice Roller",
+  title: "D6 Dice Roller",
   content: dialogContent,
   buttons:{},
   render: html=>{
