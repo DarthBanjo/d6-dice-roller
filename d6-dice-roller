@@ -165,7 +165,6 @@ let dialogContent = `
 <div style="display:grid;grid-template-columns:repeat(5,1fr);grid-gap:5px;">
   <button type="button" class="mod-button" data-mod="+1">+1</button>
   <button type="button" class="mod-button" data-mod="+2">+2</button>
-  <button type="button" class="mod-button" data-mod="+3">+3</button>
 </div>
 
 <p><strong>Roll Formula:</strong></p>
