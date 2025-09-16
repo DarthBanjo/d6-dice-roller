@@ -55,10 +55,10 @@ function getRecentFormulas() {
   const stored = localStorage.getItem(STORAGE_KEY);
   return stored ? JSON.parse(stored) : [];
 }
-function saveRecentFormula(formula) {
+function saveRecentFormula(formula, isWild=false) {
   let formulas = getRecentFormulas();
-  formulas = formulas.filter(f => f !== formula);
-  formulas.unshift(formula);
+  formulas = formulas.filter(f => !(f.formula === formula && f.isWild === isWild));
+  formulas.unshift({ formula, isWild });
   formulas = formulas.slice(0, 4);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(formulas));
 }
@@ -67,11 +67,15 @@ function updateRecentFormulas(html) {
   const recentButtons = ['#recent-01','#recent-02','#recent-03','#recent-04'];
   recentButtons.forEach((selector,index)=>{
     const button = html.find(selector);
-    const formula = recentFormulas[index];
-    if(formula){
+    const entry = recentFormulas[index];
+    if(entry){
+      const { formula, isWild } = entry;
       button.text(formula);
       button.prop('disabled',false);
-      button.off('click').on('click',()=>sendRollToChat(formula,false,formula));
+      button.off('click').on('click',()=>{
+        const toSend = isWild ? convertToWildDie(formula) : formula;
+        sendRollToChat(toSend, isWild, formula);
+      });
     } else {
       button.text(`Recent 0${index+1}`);
       button.prop('disabled',true);
@@ -85,49 +89,42 @@ async function sendRollToChat(formula, isWild=false, displayFormula=null){
     let roll = new Roll(formula);
 
     // --- Mark Wild Die explicitly ---
-if (isWild) {
-  // First, see if any dice were already marked wild (from convertToWildDie)
-  let foundWild = roll.dice.some(d => d.faces === 6 && d.options?.wild);
-
-  // If none, mark the *last* d6 as wild
-  if (!foundWild) {
-    for (let i = roll.dice.length - 1; i >= 0; i--) {
-      if (roll.dice[i].faces === 6) {
-        roll.dice[i].options.wild = true;
-        break;
+    if (isWild) {
+      let foundWild = roll.dice.some(d => d.faces === 6 && d.options?.wild);
+      if (!foundWild) {
+        for (let i = roll.dice.length - 1; i >= 0; i--) {
+          if (roll.dice[i].faces === 6) {
+            roll.dice[i].options.wild = true;
+            break;
+          }
+        }
       }
     }
-  }
-}
 
-await roll.evaluate({async:true});
+    await roll.evaluate({async:true});
 
-// --- Separate normal dice vs Wild Die ---
-let normalTerms = [];
-let wildTerms = [];
+    // --- Separate normal dice vs Wild Die ---
+    let normalTerms = [];
+    let wildTerms = [];
 
-roll.dice.forEach(d => {
-  if (d.options?.wild) {
-    // Highlight Wild Die
-    wildTerms.push(d.results.map(r => {
-      if (r.result === 6) return `<span style="color:green;font-weight:bold;">${r.result}! (Wild Die)</span>`;
-      if (r.result === 1) return `<span style="color:red;font-weight:bold;">${r.result}! (Wild Die)</span>`;
-      return `<span style="font-weight:bold;">${r.result} (Wild Die)</span>`;
-    }).join(", "));
-  } else {
-    // Normal dice
-    normalTerms.push(d.results.map(r => r.result).join(", "));
-  }
-});
+    roll.dice.forEach(d => {
+      if (d.options?.wild) {
+        wildTerms.push(d.results.map(r => {
+          if (r.result === 6) return `<span style="color:green;font-weight:bold;">${r.result}! (Wild Die)</span>`;
+          if (r.result === 1) return `<span style="color:red;font-weight:bold;">${r.result}! (Wild Die)</span>`;
+          return `<span style="font-weight:bold;">${r.result} (Wild Die)</span>`;
+        }).join(", "));
+      } else {
+        normalTerms.push(d.results.map(r => r.result).join(", "));
+      }
+    });
 
-// Join results: normal first, then Wild Die
-let renderedTerms = normalTerms.join(" | ");
-if (wildTerms.length > 0) {
-  if (renderedTerms.length > 0) renderedTerms += " | ";
-  renderedTerms += wildTerms[0];
-}
+    let renderedTerms = normalTerms.join(" | ");
+    if (wildTerms.length > 0) {
+      if (renderedTerms.length > 0) renderedTerms += " | ";
+      renderedTerms += wildTerms[0];
+    }
 
-    // Send to chat
     roll.toMessage({
       speaker: ChatMessage.getSpeaker(),
       flavor: `Rolling ${displayFormula ?? formula}${isWild?" (Wild Die)":""}`,
@@ -141,6 +138,7 @@ if (wildTerms.length > 0) {
     ui.notifications.error("Invalid roll formula.");
   }
 }
+
 // --- Dialog ---
 let dialogContent = `
 <style>
@@ -152,17 +150,13 @@ let dialogContent = `
 .formula-container input{flex:1;height:45px;font-size:150%;border:2px solid black;}
 .button-container{margin-top:15px;display:flex;justify-content:space-between;}
 .recent-rolls-section{background-color:#999791;padding:10px;border-radius:5px;margin-top:10px;}
-.recent-formula{width:48%;text-align:center;margin:5px 0;background-color:#7797a5;color:white;border:1px solid #5a6e79;border-radius:4px;}
+.recent-formula{width:48%;text-align:center;margin:5px 0;background-color:#3B3B3B;color:white;border:1px solid #5a6e79;border-radius:4px;}
 .recent-formula:disabled{opacity:0.5;}
 </style>
 
-<p><strong>Click Multiple Times to Add Dice:</strong></p>
-<div style="display:grid;grid-template-columns:repeat(5,1fr);grid-gap:5px;">
+<p><strong>Click Multiple Times to Add Dice or Pips:</strong></p>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);grid-gap:5px;">
   <button type="button" class="dice-button" data-die="d6">D6</button>
-</div>
-
-<p><strong>Select Pips to Add:</strong></p>
-<div style="display:grid;grid-template-columns:repeat(5,1fr);grid-gap:5px;">
   <button type="button" class="mod-button" data-mod="+1">+1</button>
   <button type="button" class="mod-button" data-mod="+2">+2</button>
 </div>
@@ -222,7 +216,7 @@ new Dialog({
     html.find('#roll-formula').click(()=>{
       let f=html.find('#custom-formula').val();
       if(f) sendRollToChat(f,false,f);
-      saveRecentFormula(f);
+      saveRecentFormula(f,false);
       updateRecentFormulas(html);
       html.closest(".dialog").find("button.close").click();
     });
@@ -230,7 +224,7 @@ new Dialog({
     html.find('#roll-wild').click(()=>{
       let f=html.find('#custom-formula').val();
       if(f) sendRollToChat(convertToWildDie(f),true,f);
-      saveRecentFormula(f);
+      saveRecentFormula(f,true);
       updateRecentFormulas(html);
       html.closest(".dialog").find("button.close").click();
     });
@@ -245,7 +239,7 @@ new Dialog({
         ev.preventDefault(); ev.stopPropagation();
         let f=html.find('#custom-formula').val();
         if(f) sendRollToChat(f,false,f);
-        saveRecentFormula(f);
+        saveRecentFormula(f,false);
         updateRecentFormulas(html);
         html.closest(".dialog").find("button.close").click();
       }
